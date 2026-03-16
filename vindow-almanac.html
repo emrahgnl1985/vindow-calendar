@@ -876,10 +876,9 @@ function lastWeekday(y,m,dow) {
 
 /* ════════════════════════════════════════════════════════════════
    AUTH  (Supabase)
-   Each user account needs a `role` field in user_metadata set to
-   'admin', 'ceo', or 'guest'.  Create users in the Supabase
-   dashboard under Authentication → Users and add the metadata:
-     { "role": "admin" }
+   Roles are stored in the public.profiles table (created by the
+   SQL trigger below). Default role is 'guest'. Edit roles freely
+   in the Supabase table editor under Table Editor → profiles.
 ═══════════════════════════════════════════════════════════════════ */
 const ROLE_META = {
   admin: { label: 'Administrator', dot: 'dot-admin' },
@@ -887,15 +886,19 @@ const ROLE_META = {
   guest: { label: 'Guest View',    dot: 'dot-guest'  }
 };
 
-function handleSession(session) {
-  console.log("111111111111111111", session)
+async function handleSession(session) {
   if (!session) return;
-  const user  = session.user;
-  const role  = user.user_metadata?.role || 'guest';
-  const meta  = ROLE_META[role] || ROLE_META.guest;
+  const user = session.user;
+  const { data: profile } = await _supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+  const role = profile?.role || 'guest';
+  const meta = ROLE_META[role] || ROLE_META.guest;
   currentUser = { username: user.email, role, label: meta.label, dot: meta.dot };
   currentRole = role;
-  document.getElementById('login-screen').style.display  = 'none';
+  document.getElementById('login-screen').style.display   = 'none';
   document.getElementById('calendar-screen').style.display = 'block';
   initCalendar();
 }
@@ -919,7 +922,7 @@ async function doLogin() {
     err.style.display = 'block';
     return;
   }
-  handleSession(data.session);
+  await handleSession(data.session);
 }
 
 async function doLogout() {
@@ -1079,9 +1082,10 @@ document.addEventListener('DOMContentLoaded', () => {
 /* Restore session on page load and listen for auth changes */
 (async function initAuth() {
   const { data: { session } } = await _supabase.auth.getSession();
-  if (session) handleSession(session);
+  if (session) await handleSession(session);
 
-  _supabase.auth.onAuthStateChange((_event, session) => {
+  _supabase.auth.onAuthStateChange(async (_event, session) => {
+    if (session) { await handleSession(session); return; }
     if (!session && currentUser) {
       currentUser = null;
       document.getElementById('calendar-screen').style.display = 'none';
