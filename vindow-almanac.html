@@ -888,6 +888,7 @@ const ROLE_META = {
 };
 
 function handleSession(session) {
+  console.log("111111111111111111", session)
   if (!session) return;
   const user  = session.user;
   const role  = user.user_metadata?.role || 'guest';
