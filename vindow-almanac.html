@@ -656,6 +656,29 @@ body {
         <span onclick="showAuthPanel('login')">← Back to sign in</span>
       </div>
     </div>
+
+    <!-- ── Reset Password Panel (shown after clicking email link) ── -->
+    <div id="panel-reset" style="display:none">
+      <div class="login-error" id="reset-error" style="display:none"></div>
+      <div class="login-success" id="reset-success" style="display:none"></div>
+      <p style="font-size:0.78rem;color:var(--text3);margin-bottom:1rem">Choose a new password for your account.</p>
+      <div class="field">
+        <label>New Password</label>
+        <div class="pw-row">
+          <input type="password" id="reset-password" placeholder="Min 6 characters" autocomplete="new-password">
+          <button type="button" class="pw-toggle" onclick="togglePwVisibility('reset-password', this)" title="Show/hide">👁</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Confirm New Password</label>
+        <div class="pw-row">
+          <input type="password" id="reset-confirm" placeholder="Repeat password" autocomplete="new-password"
+            onkeydown="if(event.key==='Enter')doResetPassword()">
+          <button type="button" class="pw-toggle" onclick="togglePwVisibility('reset-confirm', this)" title="Show/hide">👁</button>
+        </div>
+      </div>
+      <button class="btn-primary" id="reset-btn" onclick="doResetPassword()">Set New Password</button>
+    </div>
   </div>
 </div>
 
@@ -998,7 +1021,7 @@ async function doLogout() {
 }
 
 function showAuthPanel(name) {
-  ['login','signup','forgot'].forEach(p => {
+  ['login','signup','forgot','reset'].forEach(p => {
     document.getElementById('panel-'+p).style.display = p===name ? '' : 'none';
   });
   /* Clear messages when switching panels */
@@ -1046,7 +1069,9 @@ async function doForgotPassword() {
   err.style.display = 'none'; ok.style.display = 'none';
 
   btn.textContent = 'Sending…'; btn.disabled = true;
-  const { error } = await _supabase.auth.resetPasswordForEmail(email);
+  const { error } = await _supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + window.location.pathname
+  });
   btn.textContent = 'Send Reset Email'; btn.disabled = false;
 
   if (error) {
@@ -1055,6 +1080,36 @@ async function doForgotPassword() {
     ok.textContent = 'Reset email sent! Check your inbox.';
     ok.style.display = 'block';
     document.getElementById('forgot-email').value = '';
+  }
+}
+
+async function doResetPassword() {
+  const pw      = document.getElementById('reset-password').value;
+  const confirm = document.getElementById('reset-confirm').value;
+  const err     = document.getElementById('reset-error');
+  const ok      = document.getElementById('reset-success');
+  const btn     = document.getElementById('reset-btn');
+  err.style.display = 'none'; ok.style.display = 'none';
+
+  if (pw.length < 6) {
+    err.textContent = 'Password must be at least 6 characters.'; err.style.display = 'block'; return;
+  }
+  if (pw !== confirm) {
+    err.textContent = 'Passwords do not match.'; err.style.display = 'block'; return;
+  }
+
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  const { error } = await _supabase.auth.updateUser({ password: pw });
+  btn.textContent = 'Set New Password'; btn.disabled = false;
+
+  if (error) {
+    err.textContent = error.message; err.style.display = 'block';
+  } else {
+    ok.textContent = 'Password updated! Signing you in…';
+    ok.style.display = 'block';
+    document.getElementById('reset-password').value = '';
+    document.getElementById('reset-confirm').value  = '';
+    setTimeout(() => showAuthPanel('login'), 2000);
   }
 }
 
@@ -1147,7 +1202,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const { data: { session } } = await _supabase.auth.getSession();
   if (session) await handleSession(session);
 
-  _supabase.auth.onAuthStateChange(async (_event, session) => {
+  _supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      /* User arrived via the reset link — show the set-new-password panel */
+      document.getElementById('calendar-screen').style.display = 'none';
+      document.getElementById('login-screen').style.display   = 'flex';
+      showAuthPanel('reset');
+      return;
+    }
     if (session) { await handleSession(session); return; }
     if (!session && currentUser) {
       currentUser = null;
