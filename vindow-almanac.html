@@ -780,35 +780,27 @@ const today = new Date();
 viewYear = today.getFullYear();
 viewMonth = today.getMonth();
 
-/* Persistent storage */
-function loadEvents() {
-  try { return JSON.parse(localStorage.getItem('vindow_events') || '[]'); } catch(e) { return []; }
-}
-function saveEvents(evs) {
-  localStorage.setItem('vindow_events', JSON.stringify(evs));
-}
-let events = loadEvents();
+/* Persistent storage — Supabase */
+let events = [];
 
-/* Pre-seed with sample data if empty */
-function seedIfEmpty() {
-  if (events.length) return;
-  const y = today.getFullYear(), m = today.getMonth();
-  const fmt = (y,m,d) => `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-  events = [
-    { id: uid(), title: "Spring Equinox",       type:"holiday",  date: fmt(y,2,20),  icon:"🌸", desc:"First day of spring. Sun crosses celestial equator.", attachments:[] },
-    { id: uid(), title: "CEO Onboarding",        type:"event",    date: fmt(y,m,15),  icon:"✦",  desc:"Welcome and orientation for new leadership.", attachments:[] },
-    { id: uid(), title: "Full Moon Ceremony",    type:"holy",     date: fmt(y,m,12),  icon:"🌕", desc:"Monthly lunar observance. Mark tasks and intentions.", attachments:[] },
-    { id: uid(), title: "Founder's Birthday",    type:"personal", date: fmt(y,m,22),  icon:"🎂", desc:"Special personal day — founder's anniversary.", attachments:[] },
-    { id: uid(), title: "Summer Solstice",       type:"holiday",  date: fmt(y,5,21),  icon:"☀️", desc:"Longest day of the year.", attachments:[] },
-    { id: uid(), title: "Independence Day",      type:"holiday",  date: fmt(y,6,4),   icon:"🇺🇸", desc:"US Independence Day — federal holiday.", attachments:[] },
-    { id: uid(), title: "Autumn Equinox",        type:"holiday",  date: fmt(y,8,22),  icon:"🍂", desc:"First day of autumn.", attachments:[] },
-    { id: uid(), title: "Thanksgiving",          type:"holiday",  date: fmt(y,10,28), icon:"🦃", desc:"National day of gratitude.", attachments:[] },
-    { id: uid(), title: "Winter Solstice",       type:"holiday",  date: fmt(y,11,21), icon:"❄️", desc:"Shortest day of the year.", attachments:[] },
-    { id: uid(), title: "Christmas",             type:"holiday",  date: fmt(y,11,25), icon:"🎄", desc:"Christmas Day — federal holiday.", attachments:[] },
-  ];
-  saveEvents(events);
+async function fetchEvents() {
+  const { data, error } = await _supabase
+    .from('events')
+    .select('*, attachments(*)')
+    .order('date', { ascending: true });
+  if (error) { console.error('fetchEvents:', error); return; }
+  events = (data || []).map(e => ({
+    id:          e.id,
+    title:       e.title,
+    type:        e.type,
+    date:        e.date,
+    icon:        e.icon,
+    desc:        e.description,
+    addedBy:     e.added_by,
+    addedAt:     e.added_at,
+    attachments: e.attachments || []
+  }));
 }
-seedIfEmpty();
 
 function uid() { return Math.random().toString(36).slice(2,10); }
 
@@ -1097,7 +1089,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ════════════════════════════════════════════════════════════════
    CALENDAR INIT & RENDER
 ═══════════════════════════════════════════════════════════════════ */
-function initCalendar() {
+async function initCalendar() {
   const u = currentUser;
   document.getElementById('user-dot').className = 'dot '+u.dot;
   document.getElementById('user-label').textContent = u.label+' · '+u.username;
@@ -1105,6 +1097,7 @@ function initCalendar() {
   document.getElementById('add-event-btn').style.display = canEdit ? '' : 'none';
   document.getElementById('add-personal-btn').style.display = canEdit ? '' : 'none';
   document.getElementById('today-label').textContent = formatFull(today);
+  await fetchEvents();
   renderAll();
 }
 
@@ -1387,14 +1380,14 @@ function closeModal() {
 }
 function handleFiles(files) {
   Array.from(files).forEach(f => {
-    pendingFiles.push({name:f.name, type:f.type, size:f.size});
+    pendingFiles.push({ name: f.name, mime_type: f.type, size_bytes: f.size, file: f, existing: false });
   });
   renderFileList();
 }
 function renderFileList() {
   document.getElementById('file-list').innerHTML = pendingFiles.map(f=>`
     <div class="file-chip">
-      <span>${fileIcon(f.name)}</span>${f.name}
+      <span>${fileIcon(f.name)}</span>${f.name}${f.existing ? ' <em style="font-size:0.65rem;opacity:0.6">(saved)</em>' : ''}
     </div>`).join('');
 }
 function fileIcon(name) {
@@ -1404,39 +1397,60 @@ function fileIcon(name) {
   if (ext==='pdf') return '📄 ';
   return '📎 ';
 }
-function saveEvent() {
+async function saveEvent() {
   const title = document.getElementById('ev-title').value.trim();
   const date  = document.getElementById('ev-date').value;
   if (!title || !date) { showToast('Please enter a title and date.'); return; }
-  const ev = {
-    id: editingId || uid(),
+  const btn = document.querySelector('#add-modal .btn-save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  const id = editingId || uid();
+  const { error: evErr } = await _supabase.from('events').upsert({
+    id,
     title,
     date,
-    type: document.getElementById('ev-type').value,
-    icon: document.getElementById('ev-icon').value.trim() || defaultIcon(document.getElementById('ev-type').value),
-    desc: document.getElementById('ev-desc').value.trim(),
-    attachments: pendingFiles,
-    addedBy: currentUser.username,
-    addedAt: new Date().toISOString()
-  };
-  if (editingId) {
-    const idx = events.findIndex(e=>e.id===editingId);
-    if (idx>-1) events[idx]=ev;
-  } else {
-    events.push(ev);
+    type:        document.getElementById('ev-type').value,
+    icon:        document.getElementById('ev-icon').value.trim() || defaultIcon(document.getElementById('ev-type').value),
+    description: document.getElementById('ev-desc').value.trim(),
+    added_by:    currentUser.username,
+    added_at:    new Date().toISOString()
+  });
+  if (evErr) {
+    showToast('Error saving event.'); btn.disabled=false; btn.textContent='Save Event'; return;
   }
-  saveEvents(events);
+
+  /* Upload new files to Supabase Storage */
+  for (const f of pendingFiles.filter(p => !p.existing)) {
+    const path = `events/${id}/${Date.now()}_${f.name}`;
+    const { error: upErr } = await _supabase.storage
+      .from('event-attachments')
+      .upload(path, f.file, { contentType: f.mime_type });
+    if (upErr) { showToast(`Upload failed: ${f.name}`); continue; }
+    await _supabase.from('attachments').insert({
+      event_id: id, name: f.name, mime_type: f.mime_type,
+      size_bytes: f.size_bytes, storage_path: path
+    });
+  }
+
+  btn.disabled = false; btn.textContent = 'Save Event';
   closeModal();
+  await fetchEvents();
   renderAll();
-  showToast(editingId?'Event updated!':'Event added!');
+  showToast(editingId ? 'Event updated!' : 'Event added!');
 }
 function defaultIcon(type) {
   return type==='holiday'?'🗓':type==='personal'?'✦':type==='holy'?'☽':'📌';
 }
-function deleteEvent(id) {
+async function deleteEvent(id) {
   if (!confirm('Delete this event?')) return;
-  events = events.filter(e=>e.id!==id);
-  saveEvents(events);
+  /* Remove storage files first */
+  const ev = events.find(e => e.id === id);
+  if (ev?.attachments?.length) {
+    const paths = ev.attachments.map(a => a.storage_path);
+    await _supabase.storage.from('event-attachments').remove(paths);
+  }
+  await _supabase.from('events').delete().eq('id', id);
+  await fetchEvents();
   renderAll();
   renderDayDetail(selectedDate);
   showToast('Event deleted.');
@@ -1446,7 +1460,7 @@ function deleteEvent(id) {
    VIEW EVENT MODAL
 ═══════════════════════════════════════════════════════════════════ */
 let viewingId = null;
-function viewEvent(id, ds) {
+async function viewEvent(id, ds) {
   let ev;
   if (id.startsWith('hol_')) {
     const d = new Date(ds+'T12:00:00');
@@ -1463,14 +1477,23 @@ function viewEvent(id, ds) {
   document.getElementById('view-body').textContent = ev.desc||'No description provided.';
   const canEdit = currentUser?.role==='admin'||currentUser?.role==='ceo';
   document.getElementById('view-edit-btn').style.display = (canEdit && !id.startsWith('hol_')) ? '' : 'none';
-  const atts = ev.attachments||[];
-  document.getElementById('view-attachments').innerHTML = atts.length ? `
-    <div class="event-attachments">
-      <h4>Attachments</h4>
-      <div class="attachment-list">
-        ${atts.map(a=>`<div class="attachment-item"><span class="att-icon">${fileIcon(a.name)}</span>${a.name}<span class="attachment-type">${(a.size/1024).toFixed(0)}KB</span></div>`).join('')}
-      </div>
-    </div>` : '';
+  const atts = ev.attachments || [];
+  let attHtml = '';
+  if (atts.length) {
+    const items = await Promise.all(atts.map(async a => {
+      const { data } = await _supabase.storage
+        .from('event-attachments')
+        .createSignedUrl(a.storage_path, 3600);
+      return { ...a, url: data?.signedUrl };
+    }));
+    attHtml = `<div class="event-attachments"><h4>Attachments</h4><div class="attachment-list">
+      ${items.map(a=>`<div class="attachment-item"><span class="att-icon">${fileIcon(a.name)}</span>
+        <a href="${a.url}" target="_blank" rel="noopener">${a.name}</a>
+        <span class="attachment-type">${((a.size_bytes||0)/1024).toFixed(0)}KB</span>
+      </div>`).join('')}
+    </div></div>`;
+  }
+  document.getElementById('view-attachments').innerHTML = attHtml;
   document.getElementById('view-modal').classList.add('open');
 }
 function closeViewModal() {
