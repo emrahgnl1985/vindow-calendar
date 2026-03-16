@@ -506,6 +506,52 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--lavender); }
 
+/* ── Confirm / Success Modals ───────────────────────────────────── */
+.dialog-modal {
+  background: var(--card); border: 1px solid var(--border2);
+  border-radius: 16px; padding: 2rem 2rem 1.5rem;
+  width: 100%; max-width: 360px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.22);
+  text-align: center;
+}
+.dialog-icon {
+  font-size: 2.2rem; margin-bottom: 0.75rem; line-height: 1;
+}
+.dialog-title {
+  font-family: 'Cinzel', serif; font-size: 0.95rem;
+  color: var(--text); letter-spacing: 0.08em; margin-bottom: 0.5rem;
+}
+.dialog-msg {
+  font-size: 0.82rem; color: var(--text2); line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+.dialog-actions {
+  display: flex; gap: 0.75rem; justify-content: center;
+}
+.btn-dialog-cancel {
+  padding: 0.55rem 1.2rem;
+  background: transparent; border: 1px solid var(--border2);
+  border-radius: 8px; color: var(--text2);
+  font-size: 0.8rem; cursor: pointer; transition: all 0.2s;
+}
+.btn-dialog-cancel:hover { background: #f0f0f0; color: var(--text); }
+.btn-dialog-confirm {
+  padding: 0.55rem 1.4rem;
+  background: linear-gradient(135deg, #c0396a, #8a1a40);
+  border: none; border-radius: 8px; color: #fff;
+  font-family: 'Cinzel', serif; font-size: 0.8rem;
+  letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s;
+}
+.btn-dialog-confirm:hover { background: linear-gradient(135deg, #d44a7a, #a02050); }
+.btn-dialog-ok {
+  padding: 0.55rem 2rem;
+  background: linear-gradient(135deg, #6b4fbb, #4a3a88);
+  border: none; border-radius: 8px; color: #fff;
+  font-family: 'Cinzel', serif; font-size: 0.8rem;
+  letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s;
+}
+.btn-dialog-ok:hover { background: linear-gradient(135deg, #7d60cc, #5a4a9a); }
+
 /* ── Toast ──────────────────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 2rem; right: 2rem; z-index: 200;
@@ -754,6 +800,31 @@ body {
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeViewModal()">Close</button>
       <button class="btn-sm" id="view-edit-btn" onclick="editFromView()" style="display:none">Edit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Modal (delete) -->
+<div class="modal-backdrop" id="confirm-modal">
+  <div class="dialog-modal">
+    <div class="dialog-icon">🗑</div>
+    <div class="dialog-title">Delete Event</div>
+    <div class="dialog-msg" id="confirm-msg">Are you sure you want to delete this event? This cannot be undone.</div>
+    <div class="dialog-actions">
+      <button class="btn-dialog-cancel" onclick="resolveConfirm(false)">Cancel</button>
+      <button class="btn-dialog-confirm" onclick="resolveConfirm(true)">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Success Modal (save / update) -->
+<div class="modal-backdrop" id="success-modal">
+  <div class="dialog-modal">
+    <div class="dialog-icon">✦</div>
+    <div class="dialog-title" id="success-title">Event Saved</div>
+    <div class="dialog-msg" id="success-msg">Your event has been saved to the calendar.</div>
+    <div class="dialog-actions">
+      <button class="btn-dialog-ok" onclick="closeSuccessModal()">Done</button>
     </div>
   </div>
 </div>
@@ -1357,6 +1428,28 @@ function renderListView() {
 /* ════════════════════════════════════════════════════════════════
    MODALS — ADD / EDIT
 ═══════════════════════════════════════════════════════════════════ */
+/* ── Confirm dialog ─────────────────────────────────────────────── */
+let _confirmResolve = null;
+function showConfirm(msg) {
+  document.getElementById('confirm-msg').textContent = msg || 'Are you sure?';
+  document.getElementById('confirm-modal').classList.add('open');
+  return new Promise(res => { _confirmResolve = res; });
+}
+function resolveConfirm(result) {
+  document.getElementById('confirm-modal').classList.remove('open');
+  if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
+
+/* ── Success dialog ─────────────────────────────────────────────── */
+function showSuccess(title, msg) {
+  document.getElementById('success-title').textContent = title;
+  document.getElementById('success-msg').textContent   = msg;
+  document.getElementById('success-modal').classList.add('open');
+}
+function closeSuccessModal() {
+  document.getElementById('success-modal').classList.remove('open');
+}
+
 function openModal(mode) {
   editingId = null;
   pendingFiles = [];
@@ -1433,16 +1526,21 @@ async function saveEvent() {
   }
 
   btn.disabled = false; btn.textContent = 'Save Event';
+  const wasEditing = !!editingId;
   closeModal();
   await fetchEvents();
   renderAll();
-  showToast(editingId ? 'Event updated!' : 'Event added!');
+  showSuccess(
+    wasEditing ? 'Event Updated' : 'Event Added',
+    wasEditing ? 'Your changes have been saved to the calendar.' : 'Your event has been saved to the calendar.'
+  );
 }
 function defaultIcon(type) {
   return type==='holiday'?'🗓':type==='personal'?'✦':type==='holy'?'☽':'📌';
 }
 async function deleteEvent(id) {
-  if (!confirm('Delete this event?')) return;
+  const ok = await showConfirm('Are you sure you want to delete this event? This cannot be undone.');
+  if (!ok) return;
   /* Remove storage files first */
   const ev = events.find(e => e.id === id);
   if (ev?.attachments?.length) {
@@ -1453,7 +1551,7 @@ async function deleteEvent(id) {
   await fetchEvents();
   renderAll();
   renderDayDetail(selectedDate);
-  showToast('Event deleted.');
+  showSuccess('Event Deleted', 'The event has been permanently removed from the calendar.');
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -1571,7 +1669,11 @@ function showToast(msg) {
 
 /* Close modals on backdrop click */
 document.querySelectorAll('.modal-backdrop').forEach(m=>{
-  m.addEventListener('click', e=>{ if(e.target===m) { closeModal(); closeViewModal(); } });
+  m.addEventListener('click', e=>{
+    if(e.target!==m) return;
+    closeModal(); closeViewModal(); closeSuccessModal();
+    if(m.id==='confirm-modal') resolveConfirm(false);
+  });
 });
 </script>
 </body>
